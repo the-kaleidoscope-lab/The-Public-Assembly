@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (matches request.auth.uid)
+    // Fields:
+    //   - fullName: string (required) - User's full name
+    //   - email: string (required, email format) - User's email
+    //   - role: string (required, enum: ['user', 'admin']) - User's role
+    //   - city: string (optional) - User's city
+    //   - skills: string (optional) - User's skills
+    //   - volunteerHours: int (optional) - Total volunteer hours
+    //   - impactScore: int (optional) - User's impact score
+    //   - createdAt: timestamp (optional) - Creation time
+    //
+    // Collection: initiatives
+    // Document ID: {initiativeId}
+    // Fields:
+    //   - title: string (required) - Initiative title
+    //   - description: string (required) - Detailed description
+    //   - category: string (required) - Category
+    //   - city: string (required) - City
+    //   - createdBy: string (required) - UID of the creator
+    //   - estimatedCost: number (optional) - Budget
+    //   - suppliesNeeded: string (optional) - Supplies
+    //   - status: string (required, enum: ['Open', 'In Progress', 'Completed']) - Status
+    //   - verified: bool (optional) - Verification status
+    //   - emergency: bool (optional) - Emergency status
+    //   - createdAt: timestamp (optional) - Creation time
+    //
+    // Collection: initiatives/{initiativeId}/tasks
+    // Document ID: {taskId}
+    // Fields:
+    //   - initiativeId: string (required) - Parent ID
+    //   - title: string (required) - Task title
+    //   - description: string (optional) - Task description
+    //   - assignedTo: string (optional) - UID of assigned volunteer
+    //   - status: string (required, enum: ['todo', 'in-progress', 'completed']) - Status
+    //   - createdAt: timestamp (optional) - Creation time
+    //
+    // Collection: initiatives/{initiativeId}/messages
+    // Document ID: {messageId}
+    // Fields:
+    //   - initiativeId: string (required) - Parent ID
+    //   - taskId: string (optional) - Parent task ID
+    //   - userId: string (required) - Sender UID
+    //   - text: string (required) - Message text
+    //   - fileUrl: string (optional) - File URL
+    //   - fileName: string (optional) - File name
+    //   - fileType: string (optional) - File type
+    //   - createdAt: timestamp (required) - Creation time
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "kaig05463@gmail.com" && request.auth.token.email_verified == true));
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['fullName', 'email', 'role']) &&
+             hasOnlyAllowedFields(['fullName', 'email', 'role', 'city', 'skills', 'volunteerHours', 'impactScore', 'createdAt']) &&
+             data.fullName is string && data.fullName.size() > 0 && data.fullName.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['user', 'admin'];
+    }
+
+    function isValidInitiative(data) {
+      return hasRequiredFields(['title', 'description', 'category', 'city', 'createdBy', 'status']) &&
+             hasOnlyAllowedFields(['title', 'description', 'category', 'city', 'createdBy', 'estimatedCost', 'suppliesNeeded', 'status', 'verified', 'emergency', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.description is string && data.description.size() > 0 && data.description.size() < 5000 &&
+             data.category is string &&
+             data.city is string &&
+             data.createdBy is string &&
+             data.status in ['Open', 'In Progress', 'Completed'];
+    }
+
+    function isValidTask(data) {
+      return hasRequiredFields(['initiativeId', 'title', 'status']) &&
+             hasOnlyAllowedFields(['initiativeId', 'title', 'description', 'assignedTo', 'status', 'createdAt']) &&
+             data.initiativeId is string &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.status in ['todo', 'in-progress', 'completed'];
+    }
+
+    function isValidMessage(data) {
+      return hasRequiredFields(['initiativeId', 'userId', 'text', 'createdAt']) &&
+             hasOnlyAllowedFields(['initiativeId', 'taskId', 'userId', 'text', 'fileUrl', 'fileName', 'fileType', 'createdAt']) &&
+             data.initiativeId is string &&
+             data.userId is string &&
+             data.text is string && data.text.size() > 0 && data.text.size() < 2000;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+    }
+
+    match /initiatives/{initiativeId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidInitiative(request.resource.data) && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAuthenticated() && isValidInitiative(request.resource.data) && 
+                    (request.resource.data.createdBy == resource.data.createdBy && (request.auth.uid == resource.data.createdBy || isAdmin()));
+      allow delete: if isAdmin();
+
+      match /tasks/{taskId} {
+        allow read: if true;
+        allow create: if isAuthenticated() && isValidTask(request.resource.data);
+        allow update: if isAuthenticated() && isValidTask(request.resource.data);
+        allow delete: if isAdmin();
+      }
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && isValidMessage(request.resource.data) && request.resource.data.userId == request.auth.uid;
+        allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      }
+    }
+  }
+}

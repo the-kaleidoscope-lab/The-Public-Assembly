@@ -1,0 +1,5 @@
+{
+  "name": "Public Assembly",
+  "description": "A decentralized ecosystem designed to reclaim civic agency and coordinate collective impact at scale.",
+  "requestFramePermissions": ["geolocation"]
+}
